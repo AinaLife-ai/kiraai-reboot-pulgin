@@ -1,44 +1,227 @@
 {
-    "command_prefix": {
-        "name": "指令前缀",
+  "section_reset": {
+    "type": "section",
+    "name": "清空方式",
+    "collapsed": false,
+    "fields": {
+      "clear_mode": {
         "type": "string",
-        "default": "/reboot",
-        "hint": "触发清除上下文的指令，默认为 /reboot"
-    },
-    "enable_permission": {
-        "name": "启用权限控制",
+        "name": "清空方式",
+        "options": ["memory_only", "delete_session"],
+        "default": "memory_only",
+        "hint": "memory_only=只清空上下文记忆，完整保留会话标题、会话描述与会话级能力开关（推荐）；delete_session=删除整个会话再重建，标题、描述、能力开关都会丢失。"
+      },
+      "drop_pending_buffer": {
         "type": "switch",
-        "default": false,
-        "hint": "是否启用权限控制，启用后只有白名单用户可以执行"
-    },
-    "allowed_users": {
-        "name": "允许的用户ID",
-        "type": "list",
-        "default": [],
-        "hint": "允许执行清除上下文的用户ID列表，每行一个ID"
-    },
-    "success_message": {
-        "name": "成功反馈",
-        "type": "string",
-        "default": "✅ 已清除当前会话的上下文记忆，我们可以重新开始对话了！",
-        "hint": "清除成功时返回的消息"
-    },
-    "permission_denied_message": {
-        "name": "权限不足反馈",
-        "type": "string",
-        "default": "❌ 权限不足：您没有清除上下文的权限",
-        "hint": "权限不足时返回的消息"
-    },
-    "error_message": {
-        "name": "错误反馈",
-        "type": "string",
-        "default": "❌ 清除上下文失败: {error}",
-        "hint": "发生错误时返回的消息，可用 {error} 占位符显示错误信息"
-    },
-    "verbose_log": {
-        "name": "详细日志",
-        "type": "switch",
-        "default": false,
-        "hint": "是否输出详细的调试日志"
+        "name": "丢弃待处理缓冲消息",
+        "default": true,
+        "hint": "清空前丢弃本会话尚未进入上下文的缓冲消息，避免清空后它们又被写进上下文。"
+      }
     }
+  },
+  "section_command": {
+    "type": "section",
+    "name": "指令触发",
+    "collapsed": false,
+    "fields": {
+      "enable_reboot_command": {
+        "type": "switch",
+        "name": "启用重开指令",
+        "default": false,
+        "hint": "发送关键词后立即重置当前会话上下文；是否附带摘要由「重开摘要 → 重开时生成摘要」决定。默认关闭。"
+      },
+      "reboot_commands": {
+        "type": "list",
+        "name": "重开指令关键词",
+        "default": ["/reboot"],
+        "hint": "整句匹配任一词即触发，每行一个。默认 /reboot。"
+      },
+      "enable_resum_command": {
+        "type": "switch",
+        "name": "启用摘要重开指令",
+        "default": false,
+        "hint": "发送关键词后重置上下文【并强制生成累积摘要】，不受「重开时生成摘要」开关影响。默认关闭。"
+      },
+      "resum_commands": {
+        "type": "list",
+        "name": "摘要重开指令关键词",
+        "default": ["/resume"],
+        "hint": "整句匹配任一词即触发，每行一个。默认 /resume（注意带 e）。若同时安装 Auto Delete Session，与之重叠的关键词会让位给 ADS。"
+      },
+      "reboot_enable_permission": {
+        "type": "switch",
+        "name": "指令启用权限控制",
+        "default": false,
+        "hint": "开启后仅白名单内用户可执行两条指令；开启但白名单为空时，所有用户都不可执行。"
+      },
+      "reboot_allowed_users": {
+        "type": "list",
+        "name": "指令白名单",
+        "default": [],
+        "hint": "允许执行重开的用户 ID，每行一个。"
+      },
+      "reboot_success_message": {
+        "type": "string",
+        "name": "成功反馈",
+        "default": "✅ 已重置本会话上下文{summary}，我们可以重新开始对话了！",
+        "hint": "可用 {summary} 占位符显示摘要状态。"
+      },
+      "reboot_permission_denied_message": {
+        "type": "string",
+        "name": "权限不足反馈",
+        "default": "❌ 权限不足：您没有重置上下文的权限",
+        "hint": "权限不足时返回的消息。"
+      },
+      "reboot_error_message": {
+        "type": "string",
+        "name": "错误反馈",
+        "default": "❌ 重置上下文失败: {error}",
+        "hint": "发生错误时返回的消息，可用 {error} 占位符显示错误信息。"
+      },
+      "reboot_empty_message": {
+        "type": "string",
+        "name": "无历史反馈",
+        "default": "📭 当前会话没有可重置的历史",
+        "hint": "会话没有可重置的历史时返回的消息（不会执行重置）。"
+      }
+    }
+  },
+  "section_llm_tool": {
+    "type": "section",
+    "name": "bot 自主重置",
+    "collapsed": false,
+    "fields": {
+      "allow_llm_reboot": {
+        "type": "switch",
+        "name": "允许 bot 自主重置上下文",
+        "default": true,
+        "hint": "开启后模型可在用户表达「重新开始 / 忘掉之前的内容」时自行调用工具重置当前会话，无需人工确认。关闭后该工具对模型不可见，仅保留指令触发。"
+      }
+    }
+  },
+  "section_summary": {
+    "type": "section",
+    "name": "重开摘要",
+    "collapsed": false,
+    "fields": {
+      "enable_summary": {
+        "type": "switch",
+        "name": "重开时生成摘要",
+        "default": false,
+        "hint": "开启后，重置上下文前会先把被清空的历史压缩成摘要写回新上下文，避免彻底失忆。默认关闭。"
+      },
+      "summarize_mode": {
+        "type": "string",
+        "name": "摘要模式",
+        "options": ["async", "sync"],
+        "default": "async",
+        "hint": "async=立即重置并回复，摘要后台生成后补写（推荐，不堵塞；代价是摘要就绪后会再改一次上下文前缀，多一次缓存失效）；sync=等摘要生成完再重置并回复（确定性最高、只写一次，但会阻塞数秒到数十秒）。"
+      },
+      "summarize_model": {
+        "type": "model_select",
+        "name": "摘要模型",
+        "model_type": "llm",
+        "default": "",
+        "hint": "用于生成摘要的模型。留空则自动回退：快速模型 → 默认模型。建议选便宜快速的小模型。"
+      },
+      "summarize_timeout_sec": {
+        "type": "float",
+        "name": "摘要超时（秒）",
+        "default": 60.0,
+        "minimum": 0.5,
+        "maximum": 300,
+        "hint": "生成摘要的 LLM 调用超时；超时则放弃摘要直接重置，不影响主流程。"
+      },
+      "summarize_max_input_chars": {
+        "type": "integer",
+        "name": "摘要输入上限（字符）",
+        "default": 10000,
+        "minimum": -1,
+        "hint": "喂给摘要模型的历史最大字符数（从最新往前截取）。0 或 -1 表示无上限。"
+      },
+      "summarize_max_output_chars": {
+        "type": "integer",
+        "name": "摘要输出上限（字符）",
+        "default": 5000,
+        "minimum": -1,
+        "hint": "生成摘要的最大字符数，超出则截断。0 或 -1 表示无上限。"
+      },
+      "summarize_prompt_template": {
+        "type": "markdown",
+        "name": "摘要提示词",
+        "default": "你是聊天记忆压缩器。下面这段较早的聊天记录即将被清理,请把它压缩成一段简短摘要（200字内）,用于衔接后续对话,让你能像没有失忆一样自然地继续聊下去。\n请优先保留：\n- 正在进行或未完成的事情（话题、任务、约定、待办）\n- 重要事实（人物、关系、时间、地点、已做的决定）\n- 对方的偏好、称呼、语气和你们之间的相处方式\n时间一律写绝对日期,直接输出摘要正文,不要任何开场白、标题或解释。",
+        "hint": "可自由修改（如调整字数上限、补充人设要求）。含 {text} 占位符时替换该处，否则正文追加在末尾。留空则使用内置默认。"
+      },
+      "cumulative_summary": {
+        "type": "switch",
+        "name": "累积摘要（推荐）",
+        "default": true,
+        "hint": "开启后摘要会合并旧摘要与本次被清空的历史，长期重置信息损耗更小；关闭则每次只摘要本次部分，旧摘要会丢失。"
+      },
+      "merge_prompt_template": {
+        "type": "markdown",
+        "name": "摘要合并提示词",
+        "default": "你是聊天记忆压缩器。下面有两段材料：【旧摘要】是更早对话的已有摘要，【新增记录】是刚刚被清理的对话片段。请把它们合并成一段新的摘要（600字内），用于衔接后续对话，让你能像没有失忆一样自然地继续聊下去。\n请优先保留：\n- 正在进行或未完成的事情（话题、任务、约定、待办）\n- 重要事实（人物、关系、时间、地点、已做的决定）\n- 对方的偏好、称呼、语气和你们之间的相处方式\n若新旧信息冲突，以新增记录为准。时间一律写绝对日期。直接输出合并后的摘要正文，不要任何开场白、标题或解释。\n\n【旧摘要】\n{old_summary}\n\n【新增记录】\n{new_summary}",
+        "hint": "累积摘要开启时生效，必须包含 {old_summary} 与 {new_summary} 占位符。留空则使用内置默认。"
+      },
+      "self_compress_prompt_template": {
+        "type": "markdown",
+        "name": "摘要自压缩提示词",
+        "default": "你是聊天记忆压缩器。下面这段对话摘要过长，请在不丢失关键信息的前提下进一步压缩（600字内），用于衔接后续对话，让你能像没有失忆一样自然地继续聊下去。\n优先保留：未完成的事情、重要事实（人物/关系/时间/地点/已做的决定）、对方的偏好与称呼。\n直接输出压缩后的摘要正文，不要任何开场白或解释。\n\n{summary}",
+        "hint": "累计摘要超过输出上限时的兜底压缩模板，必须包含 {summary} 占位符。留空则使用内置默认。"
+      },
+      "merge_timeout_sec": {
+        "type": "float",
+        "name": "摘要合并超时（秒）",
+        "default": 120.0,
+        "minimum": 1,
+        "maximum": 300,
+        "hint": "旧摘要与新增量合并、以及超长自压缩的超时；超时退化为拼接，避免阻塞。"
+      },
+      "keep_summary_alive": {
+        "type": "switch",
+        "name": "摘要保活（内存桥）",
+        "default": true,
+        "hint": "摘要头是记忆的第一块，会被框架原生窗口最先挤掉（默认窗口只有 10 轮）。开启后当它消失时，本插件会临时把它补回当前这次请求（不写盘），避免长会话再次失忆。强烈建议保持开启。"
+      },
+      "enable_summary_logging": {
+        "type": "switch",
+        "name": "摘要详细日志",
+        "default": false,
+        "hint": "输出摘要触发条件、合并过程与完整摘要文本等详细信息（便于排查，会增加日志量）。"
+      }
+    }
+  },
+  "section_compat": {
+    "type": "section",
+    "name": "兼容",
+    "collapsed": true,
+    "fields": {
+      "ads_interop": {
+        "type": "switch",
+        "name": "与 Auto Delete Session 兼容",
+        "default": true,
+        "hint": "开启后：① 摘要头与 ADS 使用同一标记，两个插件的摘要互相认领，不会各自写一份；② 指令关键词与 ADS 重叠时本插件自动让位。关闭则完全隔离（各自摘要头，可能出现重复）。"
+      },
+      "warn_conflict": {
+        "type": "switch",
+        "name": "检测到其它记忆插件时告警",
+        "default": true,
+        "hint": "加载时检测同样会改写会话记忆的插件（ADS / CCS / KSM），仅打印告警，不会启用或禁用它们。"
+      }
+    }
+  },
+  "section_debug": {
+    "type": "section",
+    "name": "调试",
+    "collapsed": true,
+    "fields": {
+      "verbose_log": {
+        "type": "switch",
+        "name": "详细日志",
+        "default": false,
+        "hint": "输出重置流程、关键词命中与兼容检测的详细日志（排查用）。从 1.x 升级时会自动继承旧版的「详细日志」开关。"
+      }
+    }
+  }
 }
