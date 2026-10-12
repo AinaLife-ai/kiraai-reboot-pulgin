@@ -200,6 +200,13 @@ data/plugins/reboot_plugin/
 <details>
 <summary>点击展开历史版本</summary>
 
+### v2.1.1
+
+- 适配 KiraAI 3.0 rc.1：会话接口全异步化 + SQLite 持久化（旧同步记忆 API 已移除）。
+  新增双世代会话层（读 `get_session`/`flatten_content`，写 `update_session(sid, content=)` upsert），
+  **清空上下文照旧只清对话内容、保留会话标题与能力设置**；delete_session 模式保留可选并已 await 化；
+  启动检测改世代形态识别，3.0 下不再自我禁用。测试桩双世代化（3.0 用真 SQLite 会话库）。
+
 ### v2.1.0
 
 - **修复**：从 1.0/1.1 升级后，命令词 / 返回语 / 白名单在设置页显示为默认值（观感上等于「配置全丢了」）的问题。根因是 2.0 把配置键全部重命名（`command_prefix` → `section_command.reboot_commands` 等），而框架只会为新键补默认值、从不迁移 —— 旧值变成了文件里的「孤儿键」。现在改为**一次性落盘迁移**：把旧值搬进新键、删除旧键，幂等且可审计。
