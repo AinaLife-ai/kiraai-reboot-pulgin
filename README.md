@@ -24,6 +24,13 @@ KiraAI 的会话上下文重置插件。支持**只清空上下文、不删会�
 
 ---
 
+## 兼容性
+
+支持 KiraAI 2.33+ 与 3.0 全系列（含 v3.0.0-rc.1；特征识别，不绑版本号）。
+v2.1.1：适配 3.0 rc.1 的会话接口全异步化与 SQLite 持久化（`fetch_memory`/`write_memory` 等旧同步 API 已移除）——
+新增双世代会话层（读：`get_session`+`flatten_content`；写：`update_session(sid, content=...)` upsert），
+**清空上下文照旧只清对话内容、保留会话标题与能力设置**；`delete_session` 模式保留可选但已 await 化。
+
 ## 安装
 
 把本仓库放进 KiraAI 的 `data/plugins/` 目录（目录名任意），重启 KiraAI 即可。
