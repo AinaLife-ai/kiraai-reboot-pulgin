@@ -17,6 +17,7 @@ field, so all of that survives.
 
 import asyncio
 import hashlib
+import inspect
 import json
 import os
 import time
@@ -543,17 +544,17 @@ class RebootPlugin(BasePlugin):
             logger.error("[reboot] SessionManager unavailable, plugin disabled")
             return
 
-        required = (
-            "fetch_memory",
-            "read_memory",
-            "write_memory",
-            "delete_session",
-            "get_session_info",
-            "get_memory_count",
-        )
-        missing = [name for name in required if not hasattr(self.session_mgr, name)]
-        if missing:
-            logger.error(f"[reboot] SessionManager is missing methods: {missing}")
+        # 世代形态识别（特征探测，不绑版本号）：
+        #   2.x  = 同步记忆 API（fetch_memory/read_memory/write_memory/...）
+        #   3.0+ = 全异步会话接口（get_session/update_session/delete_session，SQLite 持久化）
+        _req_2x = ("fetch_memory", "read_memory", "write_memory", "delete_session")
+        _req_rc1 = ("get_session", "update_session", "delete_session")
+        if all(hasattr(self.session_mgr, n) for n in _req_2x):
+            self._sm_gen = "sync"
+        elif all(hasattr(self.session_mgr, n) for n in _req_rc1):
+            self._sm_gen = "async"
+        else:
+            logger.error("[reboot] SessionManager 接口形态无法识别（既非旧版同步式也非新版异步式），插件停用")
             self.session_mgr = None
             return
 
@@ -619,7 +620,7 @@ class RebootPlugin(BasePlugin):
     def _find_session_manager(self):
         for name in ("session_mgr", "session_manager", "mem_mgr", "memory_manager"):
             obj = getattr(self.ctx, name, None)
-            if obj is not None and hasattr(obj, "write_memory"):
+            if obj is not None and (hasattr(obj, "write_memory") or hasattr(obj, "update_session")):
                 return obj
         return None
 
@@ -987,26 +988,60 @@ class RebootPlugin(BasePlugin):
                 return extract_summary_text(content), list(flat[1:])
         return "", list(flat)
 
-    def _write_memory(self, sid: str, chunks: List[list]) -> None:
-        """Replace the session memory, keeping every other session field.
+    # ── 双世代会话层（特征识别，不绑版本号）──────────────────────────────
+    # 2.x：同步记忆 API（fetch_memory/read_memory/write_memory/get_session_info）。
+    # 3.0 rc.1+：全异步（get_session/update_session(content=)/delete_session），
+    #   会话持久化于 SQLite，无常驻 chat_memory 缓存；update_session 为 upsert，
+    #   content 整体替换，标题/能力设置/data 等元数据全部保留。
+    async def _sm_read_flat(self, sid: str) -> list:
+        sm = self.session_mgr
+        if hasattr(sm, "fetch_memory"):
+            return list(sm.fetch_memory(sid) or [])
+        s = await sm.get_session(sid, ensure_session=False)
+        return (s.flatten_content() if s else []) or []
+
+    async def _sm_read_chunks(self, sid: str) -> list:
+        sm = self.session_mgr
+        if hasattr(sm, "read_memory"):
+            return [list(c) for c in (sm.read_memory(sid) or [])]
+        s = await sm.get_session(sid, ensure_session=False)
+        return [list(c) for c in (s.content if s else [])]
+
+    async def _sm_write_chunks(self, sid: str, chunks) -> None:
+        sm = self.session_mgr
+        if hasattr(sm, "write_memory"):
+            sm.write_memory(sid, chunks)
+            return
+        await sm.update_session(sid, content=chunks)
+
+    async def _sm_recreate(self, sid: str, chunks) -> None:
+        """delete_session 模式：删除并重建空壳再写入（两代）。"""
+        sm = self.session_mgr
+        res = sm.delete_session(sid)
+        if inspect.isawaitable(res):
+            await res
+        if hasattr(sm, "write_memory"):
+            sm.get_session_info(sid)  # 2.x：重建空壳
+            sm.write_memory(sid, chunks)
+        else:
+            await sm.update_session(sid, content=chunks)  # rc.1 upsert 自建
+    async def _write_memory(self, sid: str, chunks: List[list]) -> None:
+        """Replace the session memory content, keeping every other session field.
 
         Buffered-but-unwritten messages are discarded here (and not earlier): this
         function is synchronous, so no message can slip into the buffer between the
         drop and the write. Dropping the buffer before an awaited summary call
         would leave a window in which a debounce flush re-fills it.
         """
-        sm = self.session_mgr
         if self.drop_pending_buffer:
             self._drop_buffer(sid)
         if self._event_bus is not None:
             self._own_writes[sid] = [self._mem_fingerprint(chunks), time.monotonic()]
         if self.clear_mode == "delete_session":
-            sm.delete_session(sid)
-            sm.get_session_info(sid)  # recreate an empty shell
-            sm.write_memory(sid, chunks)
+            await self._sm_recreate(sid, chunks)
             self._log(f"session {sid} deleted and recreated (delete_session mode)")
             return
-        sm.write_memory(sid, chunks)
+        await self._sm_write_chunks(sid, chunks)
 
     async def _reset(
         self, sid: str, *, force_summary: bool, reason: str, apply_cooldown: bool = False
@@ -1033,7 +1068,7 @@ class RebootPlugin(BasePlugin):
 
     async def _reset_locked(self, sid: str, *, force_summary: bool, reason: str):
         sm = self.session_mgr
-        old_flat = list(sm.fetch_memory(sid) or [])
+        old_flat = await self._sm_read_flat(sid)
         if not old_flat:
             logger.info(f"[reboot] no history to reset sid={sid} ({reason})")
             return ("empty", None)
@@ -1054,7 +1089,7 @@ class RebootPlugin(BasePlugin):
         want_summary = bool(force_summary or self.enable_summary)
 
         if not want_summary:
-            self._write_memory(sid, [])
+            await self._write_memory(sid, [])
             self._store_forget(sid)
             logger.info(f"[reboot] context cleared sid={sid} ({reason})")
             return ("ok", None)
@@ -1063,10 +1098,10 @@ class RebootPlugin(BasePlugin):
             delta = await self._summarize(sid, rest)
             final = await self._merge(sid, base, delta)
             if final:
-                self._write_memory(sid, [build_summary_chunk(final)])
+                await self._write_memory(sid, [build_summary_chunk(final)])
                 self._store_set(sid, final)
             else:
-                self._write_memory(sid, [])
+                await self._write_memory(sid, [])
                 self._store_forget(sid)
             logger.info(
                 f"[reboot] context cleared{' with summary' if final else ' (summary failed)'} "
@@ -1077,10 +1112,10 @@ class RebootPlugin(BasePlugin):
         # async (default): carry the previous cumulative summary over immediately so
         # the session is never fully amnesiac while the new one is generated.
         if base:
-            self._write_memory(sid, [build_summary_chunk(base)])
+            await self._write_memory(sid, [build_summary_chunk(base)])
             self._store_set(sid, base)
         else:
-            self._write_memory(sid, [])
+            await self._write_memory(sid, [])
             self._store_forget(sid)
         if rest:
             self._schedule_async_summary(sid, rest, base)
@@ -1166,7 +1201,7 @@ class RebootPlugin(BasePlugin):
                     return
                 current_base = base
                 for _ in range(2):
-                    applied, head_now = self._apply_summary(sid, current_base, final)
+                    applied, head_now = await self._apply_summary(sid, current_base, final)
                     if applied:
                         self._store_set(sid, final)
                         logger.info(
@@ -1194,22 +1229,21 @@ class RebootPlugin(BasePlugin):
 
         self._async_tasks[sid] = asyncio.create_task(_run())
 
-    def _apply_summary(self, sid: str, expected_base: str, final: str):
-        """Replace the summary head. Deliberately synchronous.
+    async def _apply_summary(self, sid: str, expected_base: str, final: str):
+        """Replace the summary head.
 
-        There must be NO await between ``read_memory`` and ``write_memory``: the
-        framework appends a turn with ``update_memory`` at the end of every round,
-        and a suspension point here would let that append be overwritten by our
-        stale snapshot. With no await (single-threaded event loop) the race is
-        impossible by construction.
+        2.x 下本函数同步、read→write 之间零 await，原子性由构造保证（框架在
+        每轮末尾用 ``update_memory`` 追加，同步段内无人能插进来）。3.0 rc.1 起
+        会话接口全异步，读改写是两个**相邻** await —— 窗口与框架自身
+        ``update_memory`` 的读-改-写窗口同级；两 await 之间不安排任何其它
+        挂起点，风险量级与框架自身一致。
 
         Returns (applied, current_head).
         """
         sm = self.session_mgr
         if sm is None:
             return (False, "")
-        chunks = sm.read_memory(sid) or []
-        chunks = [list(chunk) for chunk in chunks]
+        chunks = await self._sm_read_chunks(sid)
         head_now = ""
         if chunks and is_summary_chunk(chunks[0]):
             head_now = extract_summary_text(str(_msg_get(chunks[0][0], "content", "") or ""))
@@ -1222,5 +1256,5 @@ class RebootPlugin(BasePlugin):
             chunks[0] = [message] + list(chunks[0])
         else:
             chunks = [[message]]
-        sm.write_memory(sid, chunks)
+        await self._sm_write_chunks(sid, chunks)
         return (True, head_now)
