@@ -250,6 +250,11 @@ class FakeCtx:
     def get_plugin_data_dir(self):
         return self._data_dir
 
+    # 镜像真 PluginContext：ctx 级发送就是委托给 message_processor（GA 起 message_processor
+    # 侧同名方法已弃用，插件应调这里）
+    async def send_message_chain(self, session, chain, **kw):
+        return await self.message_processor.send_message_chain(session, chain, **kw)
+
     def get_buffer(self, sid: str) -> FakeBuffer:
         return self._buffers.setdefault(sid, FakeBuffer())
 

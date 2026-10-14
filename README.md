@@ -200,6 +200,10 @@ data/plugins/reboot_plugin/
 <details>
 <summary>点击展开历史版本</summary>
 
+### v2.1.2
+
+  - 兼容 KiraAI 3.0 GA 弃用面：`ctx.message_processor.send_message_chain` → `ctx.send_message_chain`（两代等价）。测试 harness 补 ctx 级发送委托；2.x/3.0 GA 126 用例通过。
+
 ### v2.1.1
 
 - 适配 KiraAI 3.0 rc.1：会话接口全异步化 + SQLite 持久化（旧同步记忆 API 已移除）。
