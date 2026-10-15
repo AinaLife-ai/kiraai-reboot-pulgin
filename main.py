@@ -718,7 +718,7 @@ class RebootPlugin(BasePlugin):
         if not text:
             return
         try:
-            await self.ctx.message_processor.send_message_chain(
+            await self.ctx.send_message_chain(
                 session=sid, chain=MessageChain([Text(text)])
             )
         except Exception:
