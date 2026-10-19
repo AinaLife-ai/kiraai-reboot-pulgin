@@ -200,6 +200,14 @@ data/plugins/reboot_plugin/
 <details>
 <summary>点击展开历史版本</summary>
 
+### v2.1.3
+
+- **摘要头识别改为全量扫描**：摘要不一定在 `messages[0]`（KSM 合并视图会重排，旧版 KSM 还会加 `[session:]` 前缀）。现在扫描请求消息，找到 marker 就认领；KSM + reboot 同装时不再重复注入旧摘要。
+- **store 与头部对账**：识别到头部摘要时调用 `sync_with_head` 回写并保存，避免 reboot 的累计摘要长期停在旧版本。
+- **固定排在 KSM 之后**：`on_llm_request` 优先级改为 `LOW - 10`（-60），KSM 固定 -50；加载顺序变化时 boot 的摘要桥也不会被 KSM 重建清掉。
+- **own-write 指纹忽略 `_extra`**：只对 `role/content/tool_calls/tool_call_id/name` 做指纹，框架 `normalize_memory` 注入的 `llm_message_id` 不再让自身写入匹配失败。
+- 测试 126 → **127 passed**。
+
 ### v2.1.2
 
   - 兼容 KiraAI 3.0 GA 弃用面：`ctx.message_processor.send_message_chain` → `ctx.send_message_chain`（两代等价）。测试 harness 补 ctx 级发送委托；2.x/3.0 GA 126 用例通过。

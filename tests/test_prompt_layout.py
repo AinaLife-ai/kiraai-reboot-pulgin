@@ -203,5 +203,26 @@ async def test_bridge_does_not_persist_into_memory():
     check_eq(f.sm.read_memory(SID), before, "the bridge must never write to memory")
 
 
+async def test_bridge_recognises_a_summary_anywhere_and_adopts_it():
+    """KSM 会重排/加来源前缀：摘要不在 [0] 也不能重复注入，并且要回写 store。"""
+    from harness import make_llm_request
+
+    f = await make_fixture({"section_summary.keep_summary_alive": True})
+    f.seed_session(SID, turns=1)
+    f.plugin._store_set(SID, "OLD-STORE")
+
+    prefixed = (
+        "[session: qq:dm:1] [chat_type: private] [前情摘要|系统注入] "
+        "以下是更早对话被清理前的自动摘要，仅供延续上下文参考：\nNEW-HEAD"
+    )
+    req = make_llm_request(messages=[
+        {"role": "user", "content": "plain"},
+        {"role": "user", "content": prefixed},
+        {"role": "user", "content": "tail"},
+    ])
+    await f.plugin.on_llm_request(make_batch_event(SID), req, None)
+    check_eq(len(req.messages), 3, "must not inject a duplicate summary")
+    check_eq(f.plugin._store.get(SID), "NEW-HEAD", "store must adopt the head summary")
+
 TESTS = [(name, obj) for name, obj in sorted(globals().items())
          if name.startswith("test_") and callable(obj)]
