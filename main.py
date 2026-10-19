@@ -866,7 +866,8 @@ class RebootPlugin(BasePlugin):
 
     # ── request hook: tool gate + summary bridge ──────────────────────────────
 
-    @on.llm_request(priority=Priority.LOW)
+    # 固定排在 KSM（-50）之后：KSM 会重建 req.messages，先跑会被清掉
+    @on.llm_request(priority=Priority.LOW - 10)
     async def on_llm_request(self, event, req: LLMRequest, tag_set, *_):
         if not self.allow_llm_reboot:
             try:
@@ -897,8 +898,27 @@ class RebootPlugin(BasePlugin):
             messages = req.messages
             if not messages:
                 return
-            content = _msg_get(messages[0], "content")
-            if isinstance(content, str) and content.startswith(SUMMARY_MARKER):
+            # 摘要头不一定在 [0]：KSM 的合并视图会重排，旧版还会加 [session:] 前缀。
+            # 扫全量；找到就认领并把内容回写 store，避免长期用旧摘要重复注入。
+            for message in messages:
+                content = _msg_get(message, "content")
+                if not isinstance(content, str):
+                    continue
+                pos = content.find(SUMMARY_MARKER)
+                if pos < 0 or pos > 120:
+                    continue
+                body = content[pos + len(SUMMARY_MARKER):]
+                head_text = (
+                    body.split("\n", 1)[1].strip() if "\n" in body else body.strip()
+                )
+                if head_text and self.cumulative_summary and self._store is not None:
+                    try:
+                        self._store.sync_with_head(
+                            sid, head_text, session_has_messages=len(messages) > 1
+                        )
+                        self._store.save()
+                    except Exception:
+                        pass
                 return
             stored = (self._store.get(sid) or "").strip()
             if not stored:
@@ -936,8 +956,21 @@ class RebootPlugin(BasePlugin):
 
     @staticmethod
     def _mem_fingerprint(memory) -> str:
+        """忽略框架写入时新增的 _extra，只对消息语义字段做指纹。
+
+        否则 update_session 落盘前 normalize_memory 注入的 llm_message_id
+        会让自己的写入永远匹配不上（虽然结果无害，但 own-write 判断失效）。
+        """
+        keys = ("role", "content", "tool_calls", "tool_call_id", "name")
+
+        def _norm(m):
+            if isinstance(m, dict):
+                return {k: m.get(k) for k in keys if k in m}
+            return m
+
         try:
-            blob = json.dumps(memory, sort_keys=True, ensure_ascii=False, default=str)
+            normalized = [[_norm(m) for m in chunk] for chunk in memory]
+            blob = json.dumps(normalized, sort_keys=True, ensure_ascii=False, default=str)
         except Exception:
             blob = repr(memory)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
